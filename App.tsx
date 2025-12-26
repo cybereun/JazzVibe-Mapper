@@ -5,7 +5,23 @@ import { VibeOption, UserSelection, GeneratedResult, Step, ImageModel } from './
 import StepIndicator from './components/StepIndicator';
 import SelectionCard from './components/SelectionCard';
 import ResultView from './components/ResultView';
-import { generateTitles, generateThumbnail, generateColorPalette } from './services/geminiService';
+import { generateTitles, generateThumbnail, generateColorPalette, testConnection } from './services/geminiService';
+
+// Simple XOR encryption for local storage security
+const SALT = "jazz-vibe-mapper-key";
+const encryptKey = (key: string) => {
+  return btoa(key.split('').map((char, i) => 
+    String.fromCharCode(char.charCodeAt(0) ^ SALT.charCodeAt(i % SALT.length))
+  ).join(''));
+};
+const decryptKey = (encoded: string) => {
+  try {
+    const text = atob(encoded);
+    return text.split('').map((char, i) => 
+      String.fromCharCode(char.charCodeAt(0) ^ SALT.charCodeAt(i % SALT.length))
+    ).join('');
+  } catch (e) { return ""; }
+};
 
 const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<Step>('destination');
@@ -21,22 +37,64 @@ const App: React.FC = () => {
   
   // Settings States
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<ImageModel>('flash');
+  const [isTesting, setIsTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState<{s: boolean, m: string} | null>(null);
 
   useEffect(() => {
+    // Load from local storage
+    const savedEncKey = localStorage.getItem('user_gemini_key');
     const savedModel = localStorage.getItem('selected_model') as ImageModel;
+    
+    if (savedEncKey) {
+      const dec = decryptKey(savedEncKey);
+      setApiKeyInput(dec);
+      // Inject into shimmed process.env for the service to use
+      if ((window as any).process?.env) {
+        (window as any).process.env.API_KEY = dec;
+      }
+    }
     if (savedModel) setSelectedModel(savedModel);
   }, []);
 
   const handleSaveSettings = () => {
+    if (apiKeyInput.trim()) {
+      localStorage.setItem('user_gemini_key', encryptKey(apiKeyInput.trim()));
+      if ((window as any).process?.env) {
+        (window as any).process.env.API_KEY = apiKeyInput.trim();
+      }
+    }
     localStorage.setItem('selected_model', selectedModel);
     setIsSettingsOpen(false);
+    setTestMsg(null);
+  };
+
+  const handleTestKey = async () => {
+    if (!apiKeyInput.trim()) {
+      setTestMsg({s: false, m: "API 키를 입력해주세요."});
+      return;
+    }
+    // Temporarily set key for testing
+    if ((window as any).process?.env) {
+      (window as any).process.env.API_KEY = apiKeyInput.trim();
+    }
+    
+    setIsTesting(true);
+    setTestMsg(null);
+    try {
+      const res = await testConnection();
+      setTestMsg({s: res.success, m: res.message});
+    } catch (e) {
+      setTestMsg({s: false, m: "테스트 중 오류가 발생했습니다."});
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const handleSelection = (option: VibeOption) => {
     const nextSelection = { ...selection, [currentStep]: option };
     setSelection(nextSelection);
-    
     if (currentStep === 'destination') setTimeout(() => setCurrentStep('view'), 300);
     else if (currentStep === 'view') setTimeout(() => setCurrentStep('mood'), 300);
   };
@@ -55,13 +113,11 @@ const App: React.FC = () => {
   const handleGenerate = async () => {
     if (!selection.destination || !selection.view || !selection.mood) return;
     
-    // For gemini-3-pro-image-preview, user must select their own key via the aistudio interface
-    if (selectedModel === 'pro') {
-      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-      if (!hasKey) {
-        await (window as any).aistudio.openSelectKey();
-        // Proceeding after openSelectKey as per race condition guidelines
-      }
+    const currentKey = (window as any).process?.env?.API_KEY;
+    if (!currentKey) {
+      setIsSettingsOpen(true);
+      setError("API 키를 먼저 설정해야 합니다.");
+      return;
     }
 
     setCurrentStep('generating');
@@ -72,16 +128,11 @@ const App: React.FC = () => {
       const thumbnailPromise = generateThumbnail(selection, colors, selectedModel);
       const [titles, thumbnailData] = await Promise.all([titlesPromise, thumbnailPromise]);
       
-      setResult({
-        titles,
-        thumbnailUrl: thumbnailData.url,
-        colors,
-        promptUsed: thumbnailData.prompt
-      });
+      setResult({ titles, thumbnailUrl: thumbnailData.url, colors, promptUsed: thumbnailData.prompt });
       setCurrentStep('result');
     } catch (err: any) {
-      console.error("Generation error:", err);
-      setError("시스템 생성에 실패했습니다. 설정을 확인하거나 잠시 후 다시 시도해주세요.");
+      console.error(err);
+      setError("시스템 생성에 실패했습니다. 키 유효성 또는 네트워크 상태를 확인해주세요.");
       setCurrentStep('mood');
     }
   };
@@ -102,24 +153,17 @@ const App: React.FC = () => {
               <path d="M18 3a1 1 0 00-1.196-.98l-10 2A1 1 0 006 5v9.114A4.369 4.369 0 005 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V7.82l8-1.6v5.894A4.37 4.37 0 0015 14c-1.657 0-3 .895-3 2s1.343 2 3 2 3-.895 3-2V3z" />
             </svg>
           </div>
-          <h1 className="text-xl font-bold tracking-tight serif">
-            Jazz Vibe<span className="text-amber-500">Mapper</span>
-          </h1>
+          <h1 className="text-xl font-bold tracking-tight serif">Jazz Vibe Mapper</h1>
         </div>
-        <div className="flex items-center space-x-4">
-          <button onClick={() => setIsSettingsOpen(true)} className="p-2.5 bg-slate-900/50 hover:bg-slate-800 rounded-xl transition-all border border-slate-800">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-          </button>
-        </div>
+        <button onClick={() => setIsSettingsOpen(true)} className="p-2.5 bg-slate-900/50 hover:bg-slate-800 rounded-xl transition-all border border-slate-800">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+        </button>
       </header>
 
-      {/* Settings Modal */}
+      {/* NEW SETTINGS MODAL (Based on provided image) */}
       {isSettingsOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-sm">
-          <div className="bg-[#18181b] w-full max-w-lg rounded-[2rem] p-8 shadow-[0_0_80px_rgba(0,0,0,0.5)] border border-white/5 animate-fadeIn">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-[#18181b] w-full max-w-lg rounded-[2.5rem] p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] border border-white/5">
             <div className="flex justify-between items-center mb-10">
               <div className="flex items-center space-x-3">
                  <div className="w-10 h-10 bg-[#7c3aed] rounded-xl flex items-center justify-center text-white">
@@ -133,45 +177,56 @@ const App: React.FC = () => {
             </div>
             
             <div className="space-y-8">
-              {/* Model Select Section */}
               <div className="space-y-4">
-                <h3 className="text-lg font-bold text-slate-100">이미지 생성 모델</h3>
-                <p className="text-[13px] text-slate-500 leading-relaxed">
-                  썸네일 생성에 사용할 모델을 선택하세요. '나노 바나나 프로'는 고화질(1K) 생성을 지원하며 결제가 필요할 수 있습니다.
+                <h3 className="text-lg font-bold text-slate-100">Google Gemini API 키</h3>
+                <div className="relative">
+                  <input 
+                    type="password" 
+                    value={apiKeyInput} 
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    className="w-full bg-[#27272a] border-2 border-slate-700 rounded-2xl px-6 py-5 text-white focus:border-[#7c3aed] outline-none transition-all text-lg font-mono tracking-widest"
+                    placeholder="키를 입력하세요"
+                  />
+                </div>
+                <p className="flex items-center text-[13px] text-slate-500">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                  API 키는 브라우저 내부에 암호화되어 저장되며 외부 서버로 전송되지 않습니다.
                 </p>
-                
+                <button 
+                  onClick={handleTestKey}
+                  disabled={isTesting || !apiKeyInput}
+                  className="w-full py-4 border border-slate-700 rounded-2xl text-slate-200 font-bold hover:bg-slate-800 transition-all flex items-center justify-center space-x-3 mt-4"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                  <span>{isTesting ? "테스트 중..." : "API 기능 테스트"}</span>
+                </button>
+                {testMsg && (
+                  <div className={`text-center text-sm font-bold mt-2 ${testMsg.s ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {testMsg.m}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-4 pt-4">
+                <h3 className="text-lg font-bold text-slate-100">이미지 생성 모델</h3>
+                <p className="text-[13px] text-slate-500">썸네일 생성에 사용할 모델을 선택하세요. '나노 바나나 프로'는 유료 계정이 필요할 수 있습니다.</p>
                 <div className="space-y-3">
-                  <button 
-                    onClick={() => setSelectedModel('flash')}
-                    className={`w-full flex items-center p-5 rounded-2xl border-2 transition-all ${selectedModel === 'flash' ? 'border-[#7c3aed] bg-[#7c3aed]/5' : 'border-slate-800 bg-transparent opacity-60'}`}
-                  >
+                  <button onClick={() => setSelectedModel('flash')} className={`w-full flex items-center p-5 rounded-2xl border-2 transition-all ${selectedModel === 'flash' ? 'border-[#7c3aed] bg-[#7c3aed]/10' : 'border-slate-800 bg-transparent'}`}>
                     <div className={`w-6 h-6 rounded-full border-2 mr-4 flex items-center justify-center ${selectedModel === 'flash' ? 'border-[#7c3aed]' : 'border-slate-700'}`}>
                       {selectedModel === 'flash' && <div className="w-3 h-3 bg-[#7c3aed] rounded-full" />}
                     </div>
                     <span className="text-slate-100 font-bold">나노 바나나 (Flash Image) - 빠름</span>
                   </button>
-                  
-                  <button 
-                    onClick={() => setSelectedModel('pro')}
-                    className={`w-full flex items-center p-5 rounded-2xl border-2 transition-all ${selectedModel === 'pro' ? 'border-[#7c3aed] bg-[#7c3aed]/5' : 'border-slate-800 bg-transparent opacity-60'}`}
-                  >
+                  <button onClick={() => setSelectedModel('pro')} className={`w-full flex items-center p-5 rounded-2xl border-2 transition-all ${selectedModel === 'pro' ? 'border-[#7c3aed] bg-[#7c3aed]/10' : 'border-slate-800 bg-transparent'}`}>
                     <div className={`w-6 h-6 rounded-full border-2 mr-4 flex items-center justify-center ${selectedModel === 'pro' ? 'border-[#7c3aed]' : 'border-slate-700'}`}>
                       {selectedModel === 'pro' && <div className="w-3 h-3 bg-[#7c3aed] rounded-full" />}
                     </div>
                     <span className="text-slate-100 font-bold">나노 바나나 프로 (Pro Image) - 고화질 (1K)</span>
                   </button>
                 </div>
-
-                <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 text-[11px] text-slate-400">
-                  <p>나노 바나나 프로 이용 시 <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="text-amber-500 underline">결제 계정</a>이 필요할 수 있습니다.</p>
-                </div>
               </div>
 
-              {/* Action Button */}
-              <button 
-                onClick={handleSaveSettings}
-                className="w-full py-6 bg-[#7c3aed] hover:bg-[#6d28d9] text-white rounded-3xl font-bold text-xl transition-all shadow-lg active:scale-[0.98] mt-4"
-              >
+              <button onClick={handleSaveSettings} className="w-full py-6 bg-[#7c3aed] hover:bg-[#6d28d9] text-white rounded-3xl font-bold text-xl transition-all shadow-lg active:scale-[0.98] mt-4">
                 저장 및 닫기
               </button>
             </div>
@@ -187,6 +242,7 @@ const App: React.FC = () => {
           <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-6 rounded-3xl mb-12 text-center animate-fadeIn flex flex-col items-center">
             <span className="font-bold mb-1">시스템 오류</span>
             <span className="text-sm opacity-80">{error}</span>
+            <button onClick={() => setIsSettingsOpen(true)} className="mt-4 text-xs font-black uppercase tracking-widest text-white underline underline-offset-4">설정 열기</button>
           </div>
         )}
 
@@ -207,20 +263,14 @@ const App: React.FC = () => {
                currentStep === 'view' ? "What do you see?" : "Choose your sonic palette."}
             </h2>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-6 md:gap-10">
-              {(currentStep === 'destination' ? DESTINATIONS : currentStep === 'view' ? VIEWS : MOODS).map((option) => {
-                // Fix: Properly cast the currentStep to vibe keys to avoid Type errors with aspectRatio
-                const vibeKey = currentStep as 'destination' | 'view' | 'mood';
-                const isSelected = selection[vibeKey]?.id === option.id;
-
-                return (
-                  <SelectionCard
-                    key={option.id}
-                    option={option}
-                    selected={isSelected}
-                    onClick={() => handleSelection(option)}
-                  />
-                );
-              })}
+              {(currentStep === 'destination' ? DESTINATIONS : currentStep === 'view' ? VIEWS : MOODS).map((option) => (
+                <SelectionCard
+                  key={option.id}
+                  option={option}
+                  selected={selection[currentStep as 'destination' | 'view' | 'mood']?.id === option.id}
+                  onClick={() => handleSelection(option)}
+                />
+              ))}
             </div>
 
             {currentStep === 'destination' && (
@@ -237,31 +287,15 @@ const App: React.FC = () => {
                  <>
                    <div className="flex bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-1.5 rounded-2xl shadow-2xl">
                      {['16:9', '1:1', '9:16'].map((ratio) => (
-                       <button
-                         key={ratio}
-                         onClick={() => setSelection({ ...selection, aspectRatio: ratio })}
-                         className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all
-                           ${selection.aspectRatio === ratio ? 'bg-amber-500 text-slate-950 shadow-lg' : 'text-slate-500 hover:text-slate-300'}
-                         `}
-                       >
-                         {ratio}
-                       </button>
+                       <button key={ratio} onClick={() => setSelection({ ...selection, aspectRatio: ratio })} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${selection.aspectRatio === ratio ? 'bg-amber-500 text-slate-950 shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}>{ratio}</button>
                      ))}
                    </div>
-
-                   <button
-                      onClick={handleGenerate}
-                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-5 px-16 rounded-full shadow-2xl transition-all flex items-center space-x-4 active:scale-95 group"
-                   >
+                   <button onClick={handleGenerate} className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-5 px-16 rounded-full shadow-2xl transition-all flex items-center space-x-4 active:scale-95 group">
                       <span className="text-xl uppercase tracking-wider">Start Vibe Mapping</span>
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 group-hover:translate-x-2 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                      </svg>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 group-hover:translate-x-2 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
                    </button>
                  </>
-               ) : (
-                 <div className="h-24"></div>
-               )}
+               ) : <div className="h-24"></div>}
             </div>
           </div>
         )}
