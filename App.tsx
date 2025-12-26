@@ -50,7 +50,6 @@ const App: React.FC = () => {
     if (savedEncKey) {
       const dec = decryptKey(savedEncKey);
       setApiKeyInput(dec);
-      // Inject into shimmed process.env for the service to use
       if ((window as any).process?.env) {
         (window as any).process.env.API_KEY = dec;
       }
@@ -75,7 +74,6 @@ const App: React.FC = () => {
       setTestMsg({s: false, m: "API 키를 입력해주세요."});
       return;
     }
-    // Temporarily set key for testing
     if ((window as any).process?.env) {
       (window as any).process.env.API_KEY = apiKeyInput.trim();
     }
@@ -160,7 +158,7 @@ const App: React.FC = () => {
         </button>
       </header>
 
-      {/* NEW SETTINGS MODAL (Based on provided image) */}
+      {/* SETTINGS MODAL */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-sm animate-fadeIn">
           <div className="bg-[#18181b] w-full max-w-lg rounded-[2.5rem] p-8 shadow-[0_0_100px_rgba(0,0,0,0.8)] border border-white/5">
@@ -179,15 +177,13 @@ const App: React.FC = () => {
             <div className="space-y-8">
               <div className="space-y-4">
                 <h3 className="text-lg font-bold text-slate-100">Google Gemini API 키</h3>
-                <div className="relative">
-                  <input 
-                    type="password" 
-                    value={apiKeyInput} 
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    className="w-full bg-[#27272a] border-2 border-slate-700 rounded-2xl px-6 py-5 text-white focus:border-[#7c3aed] outline-none transition-all text-lg font-mono tracking-widest"
-                    placeholder="키를 입력하세요"
-                  />
-                </div>
+                <input 
+                  type="password" 
+                  value={apiKeyInput} 
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  className="w-full bg-[#27272a] border-2 border-slate-700 rounded-2xl px-6 py-5 text-white focus:border-[#7c3aed] outline-none transition-all text-lg font-mono tracking-widest"
+                  placeholder="키를 입력하세요"
+                />
                 <p className="flex items-center text-[13px] text-slate-500">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
                   API 키는 브라우저 내부에 암호화되어 저장되며 외부 서버로 전송되지 않습니다.
@@ -200,16 +196,11 @@ const App: React.FC = () => {
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
                   <span>{isTesting ? "테스트 중..." : "API 기능 테스트"}</span>
                 </button>
-                {testMsg && (
-                  <div className={`text-center text-sm font-bold mt-2 ${testMsg.s ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {testMsg.m}
-                  </div>
-                )}
+                {testMsg && <div className={`text-center text-sm font-bold mt-2 ${testMsg.s ? 'text-emerald-400' : 'text-rose-400'}`}>{testMsg.m}</div>}
               </div>
 
               <div className="space-y-4 pt-4">
                 <h3 className="text-lg font-bold text-slate-100">이미지 생성 모델</h3>
-                <p className="text-[13px] text-slate-500">썸네일 생성에 사용할 모델을 선택하세요. '나노 바나나 프로'는 유료 계정이 필요할 수 있습니다.</p>
                 <div className="space-y-3">
                   <button onClick={() => setSelectedModel('flash')} className={`w-full flex items-center p-5 rounded-2xl border-2 transition-all ${selectedModel === 'flash' ? 'border-[#7c3aed] bg-[#7c3aed]/10' : 'border-slate-800 bg-transparent'}`}>
                     <div className={`w-6 h-6 rounded-full border-2 mr-4 flex items-center justify-center ${selectedModel === 'flash' ? 'border-[#7c3aed]' : 'border-slate-700'}`}>
@@ -274,10 +265,36 @@ const App: React.FC = () => {
             </div>
 
             {currentStep === 'destination' && (
-               <div className="mt-16 max-w-md mx-auto">
+               <div className="mt-16 max-w-md mx-auto space-y-8">
                  <div className="relative bg-slate-900 border border-slate-800 rounded-3xl p-1.5 flex items-center shadow-2xl">
                    <input type="text" value={customDestInput} onChange={(e) => setCustomDestInput(e.target.value)} placeholder="Type a custom city..." className="flex-grow bg-transparent border-none text-white px-5 py-4 focus:ring-0 outline-none text-sm placeholder:text-slate-600" />
                    <button onClick={handleCustomDestination} className="bg-amber-500 text-slate-950 font-black px-6 py-3 rounded-2xl shadow-lg hover:bg-amber-400 transition-all">GO</button>
+                 </div>
+
+                 {/* Developer & YouTube Section */}
+                 <div className="flex flex-col items-center space-y-5 animate-fadeIn">
+                    <div className="flex flex-wrap items-center justify-center gap-6">
+                       <span className="text-slate-400 font-bold text-sm tracking-tight flex items-center">
+                          <span className="opacity-50 mr-2">Developer:</span>
+                          <span className="text-slate-200 uppercase tracking-widest">LEBI</span>
+                       </span>
+                       <a 
+                         href="https://www.youtube.com/@E-MusicVibe" 
+                         target="_blank" 
+                         rel="noopener noreferrer"
+                         className="bg-[#cc0000] hover:bg-[#ff0000] text-white px-6 py-2.5 rounded-full flex items-center space-x-2.5 transition-all shadow-[0_4px_20px_rgba(204,0,0,0.3)] hover:shadow-[0_4px_30px_rgba(204,0,0,0.5)] active:scale-95 group inline-flex"
+                       >
+                         <div className="w-5 h-5 bg-white rounded-full flex items-center justify-center flex-shrink-0">
+                            <svg className="w-2.5 h-2.5 fill-[#cc0000] ml-0.5" viewBox="0 0 24 24">
+                              <path d="M3 22v-20l18 10-18 10z" />
+                            </svg>
+                         </div>
+                         <span className="font-bold text-sm tracking-tight whitespace-nowrap">YouTube 바로가기</span>
+                       </a>
+                    </div>
+                    <p className="text-slate-600 text-[10px] uppercase tracking-[0.4em] font-medium opacity-50">
+                      Powered by Google Gemini
+                    </p>
                  </div>
                </div>
             )}
